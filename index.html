@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>高機能チーム分けツール</title>
+    <style>
+        body { font-family: sans-serif; text-align: center; padding: 20px; background-color: #f0f2f5; }
+        .container { background: white; padding: 30px; border-radius: 15px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); display: inline-block; min-width: 500px; max-width: 90%; }
+        textarea { width: 100%; height: 120px; padding: 10px; border-radius: 8px; border: 1px solid #ddd; }
+        .hint { font-size: 0.85em; color: #666; margin: 10px 0; background: #fff9db; padding: 10px; border-radius: 8px; text-align: left; }
+        .controls { display: flex; flex-wrap: wrap; justify-content: center; gap: 15px; margin: 20px 0; padding: 15px; background: #f9f9f9; border-radius: 8px; }
+        button { background-color: #28a745; color: white; border: none; padding: 12px 40px; border-radius: 30px; cursor: pointer; font-size: 16px; font-weight: bold; }
+        .iteration-block { margin-top: 30px; padding-top: 20px; border-top: 2px dashed #ddd; }
+        .result-container { display: flex; flex-wrap: wrap; justify-content: center; gap: 15px; }
+        .team-box { border: 1px solid #e0e0e0; border-radius: 10px; padding: 15px; width: 150px; background: white; }
+        .team-title { font-weight: bold; color: #28a745; border-bottom: 2px solid #28a745; margin-bottom: 10px; }
+        .special { color: #d63384; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>チーム分けツール</h2>
+    <textarea id="nameInput" placeholder="田中*&#13;佐藤&#13;鈴木*..."></textarea>
+    <div class="hint">
+        <strong>使い方：</strong><br>
+        ・名前を改行区切りで入力。<br>
+        ・<strong>名前の後に「*」</strong>を付けると必ず同じチームに1人以上*の人が割り振られます。（例：田中*）。<br>
+        ・「重複回避」をONにすると、第1回〜第5回でペアが被りにくくなります。
+    </div>
+    
+    <div class="controls">
+        <label>チーム数:</label>
+        <select id="teamCount">
+            <option value="2">2</option><option value="3">3</option><option value="4">4</option>
+        </select>
+        <label>回数:</label>
+        <select id="iterCount">
+            <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option>
+        </select>
+        <input type="checkbox" id="avoidSame" checked> <label for="avoidSame">重複回避</label>
+    </div>
+
+    <button onclick="execute()">チーム分け実行</button>
+    <div id="allResultsArea"></div>
+</div>
+
+<script>
+    let historyMap = {};
+
+    function execute() {
+        const text = document.getElementById('nameInput').value;
+        const teamCount = parseInt(document.getElementById('teamCount').value);
+        const iterCount = parseInt(document.getElementById('iterCount').value);
+        const avoidSame = document.getElementById('avoidSame').checked;
+        
+        let allMembers = text.split(/\n/).filter(n => n.trim() !== "");
+        if (allMembers.length < teamCount) return alert("人数が足りません");
+
+        historyMap = {};
+        const area = document.getElementById('allResultsArea');
+        area.innerHTML = "";
+
+        for (let t = 0; t < iterCount; t++) {
+            let bestTeams = null;
+            let minScore = Infinity;
+            const attempts = avoidSame ? 30 : 1;
+
+            for (let a = 0; a < attempts; a++) {
+                let currentTeams = splitLogic(allMembers, teamCount);
+                let score = calculatePenalty(currentTeams);
+                if (score < minScore) { minScore = score; bestTeams = currentTeams; }
+                if (score === 0) break;
+            }
+            updateHistory(bestTeams);
+            render(bestTeams, t + 1);
+        }
+    }
+
+    function splitLogic(members, teamCount) {
+        let special = members.filter(m => m.includes('*')).sort(() => Math.random() - 0.5);
+        let normal = members.filter(m => !m.includes('*')).sort(() => Math.random() - 0.5);
+        let teams = Array.from({ length: teamCount }, () => []);
+
+        // --- *マークの人の特殊振り分け (0人 or 2人以上) ---
+        // 1. まず*の人を2人ずつのペアにする
+        let pairs = [];
+        while (special.length >= 2) {
+            pairs.push([special.pop(), special.pop()]);
+        }
+        // 2. もし1人余ったら、最初のペアに合流させる（3人組にする）
+        if (special.length === 1 && pairs.length > 0) {
+            pairs[0].push(special.pop());
+        } else if (special.length === 1) {
+            // ペアが作れない（*が1人しかいない）場合はnormalに混ぜる
+            normal.push(special.pop());
+        }
+
+        // 3. 作ったペア（または3人組）を各チームに分散して入れる
+        pairs.sort(() => Math.random() - 0.5);
+        pairs.forEach((p, i) => {
+            teams[i % teamCount].push(...p);
+        });
+
+        // 4. 残りのnormalメンバーを人数が少ないチームから埋める
+        normal.forEach(m => {
+            teams.sort((a, b) => a.length - b.length);
+            teams[0].push(m);
+        });
+        
+        return teams;
+    }
+
+    function calculatePenalty(teams) {
+        let penalty = 0;
+        teams.forEach(mList => {
+            for (let i = 0; i < mList.length; i++) {
+                for (let j = i + 1; j < mList.length; j++) {
+                    const pair = [mList[i], mList[j]].sort().join('|');
+                    if (historyMap[pair]) penalty += historyMap[pair];
+                }
+            }
+        });
+        return penalty;
+    }
+
+    function updateHistory(teams) {
+        teams.forEach(mList => {
+            for (let i = 0; i < mList.length; i++) {
+                for (let j = i + 1; j < mList.length; j++) {
+                    const pair = [mList[i], mList[j]].sort().join('|');
+                    historyMap[pair] = (historyMap[pair] || 0) + 1;
+                }
+            }
+        });
+    }
+
+    function render(teams, num) {
+        const block = document.createElement('div');
+        block.className = 'iteration-block';
+        block.innerHTML = `<div><strong>第 ${num} パターン</strong></div>`;
+        const container = document.createElement('div');
+        container.className = 'result-container';
+        teams.forEach((mList, i) => {
+            const listHtml = mList.map(m => {
+                const isS = m.includes('*');
+                return `<div class="${isS ? 'special' : ''}">${m.replace('*', '')}${isS ? ' (★)' : ''}</div>`;
+            }).join('');
+            container.innerHTML += `<div class="team-box"><div class="team-title">チーム ${i+1}</div>${listHtml}</div>`;
+        });
+        block.appendChild(container);
+        document.getElementById('allResultsArea').appendChild(block);
+    }
+</script>
+</body>
+</html>
