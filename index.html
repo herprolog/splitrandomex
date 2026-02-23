@@ -27,4 +27,192 @@
         .result-container { display: flex; flex-wrap: wrap; justify-content: center; gap: 15px; }
         .team-box { border: 1px solid #e0e0e0; border-radius: 12px; padding: 15px; width: 160px; background: white; box-shadow: 0 4px 10px rgba(0,0,0,0.03); }
         .team-title { font-weight: bold; color: #28a745; border-bottom: 2px solid #28a745; margin-bottom: 12px; padding-bottom: 5px; font-size: 1.1em; }
-        .member-item { margin: 4px 0; font-size:
+        .member-item { margin: 4px 0; font-size: 15px; }
+        .special { color: #d63384; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>高機能チーム分けツール</h2>
+    
+    <div class="input-section">
+        <div class="input-block">
+            <label>1. 参加メンバー（改行区切り）</label>
+            <textarea id="nameInput" placeholder="田中*&#13;佐藤&#13;鈴木*&#13;伊藤&#13;渡辺...">田中*&#13;佐藤&#13;鈴木*&#13;伊藤&#13;渡辺&#13;山本</textarea>
+        </div>
+        <div class="input-block">
+            <label>2. チーム名（改行区切り）</label>
+            <textarea id="teamNameInput" placeholder="Aチーム&#13;Bチーム"></textarea>
+        </div>
+    </div>
+
+    <div class="hint">
+        <strong>【機能まとめ】</strong><br>
+        ・<strong>リーダー分散：</strong>名前の後に「*」を付けると、各チームにリーダーが1人以上配置されるよう調整します。<br>
+        ・<strong>チーム名指定：</strong>右側の枠に名前を書くと反映されます。空欄なら自動で「チーム1...」となります。<br>
+        ・<strong>重複回避：</strong>「回数」を2以上にすると、以前の回で同じチームだった人と極力被らないよう計算します。
+    </div>
+    
+    <div class="controls">
+        <div class="control-item">
+            <label>チーム数:</label>
+            <select id="teamCountSelect" onchange="autoGenTeamNames()">
+                <option value="2">2</option><option value="3">3</option><option value="4" selected>4</option><option value="5">5</option><option value="6">6</option>
+            </select>
+        </div>
+        <div class="control-item">
+            <label>回数:</label>
+            <select id="iterCount">
+                <option value="1">1</option><option value="2">2</option><option value="3">3</option>
+            </select>
+        </div>
+        <div class="control-item">
+            <input type="checkbox" id="avoidSame" checked> <label for="avoidSame" style="margin:0; cursor:pointer;">重複回避を優先</label>
+        </div>
+    </div>
+
+    <button onclick="execute()">チーム分け実行</button>
+    <div id="allResultsArea"></div>
+</div>
+
+<script>
+    let globalHistory = {};
+
+    // チーム数セレクトボックスを変えたときにチーム名を自動入力する補助機能
+    function autoGenTeamNames() {
+        const count = document.getElementById('teamCountSelect').value;
+        const names = [];
+        for(let i=1; i<=count; i++) names.push(`チーム${i}`);
+        document.getElementById('teamNameInput').value = names.join('\n');
+    }
+
+    // 初期化
+    autoGenTeamNames();
+
+    function execute() {
+        const nameText = document.getElementById('nameInput').value;
+        const teamNamesText = document.getElementById('teamNameInput').value;
+        const iterCount = parseInt(document.getElementById('iterCount').value);
+        const avoidSame = document.getElementById('avoidSame').checked;
+        
+        let members = nameText.split(/\n/).filter(n => n.trim() !== "");
+        let teamNames = teamNamesText.split(/\n/).filter(n => n.trim() !== "");
+        
+        if (members.length === 0) return alert("メンバーを入力してください");
+        
+        // チーム名が未入力ならセレクトボックスの数でデフォルト名を作成
+        if (teamNames.length === 0) {
+            const count = parseInt(document.getElementById('teamCountSelect').value);
+            for(let i=1; i<=count; i++) teamNames.push(`チーム${i}`);
+        }
+
+        const teamCount = teamNames.length;
+        if (members.length < teamCount) return alert("人数がチーム数より少ないです");
+
+        globalHistory = {}; // 実行のたびに履歴をリセット
+        const area = document.getElementById('allResultsArea');
+        area.innerHTML = "";
+
+        for (let t = 0; t < iterCount; t++) {
+            let bestTeams = null;
+            let minScore = Infinity;
+            // 重複回避ONなら50回シミュレーションして一番良い結果を採用
+            const attempts = avoidSame ? 50 : 1;
+
+            for (let a = 0; a < attempts; a++) {
+                let currentTeams = splitLogic(members, teamCount);
+                let score = calculatePenalty(currentTeams);
+                if (score < minScore) { 
+                    minScore = score; 
+                    bestTeams = currentTeams; 
+                }
+                if (score === 0) break;
+            }
+            updateHistory(bestTeams);
+            render(bestTeams, t + 1, teamNames);
+        }
+    }
+
+    function splitLogic(members, teamCount) {
+        let special = members.filter(m => m.includes('*')).sort(() => Math.random() - 0.5);
+        let normal = members.filter(m => !m.includes('*')).sort(() => Math.random() - 0.5);
+        let teams = Array.from({ length: teamCount }, () => []);
+
+        // 【機能維持】リーダー(*)の分散ロジック
+        let groups = [];
+        while (special.length >= 2) {
+            groups.push([special.pop(), special.pop()]);
+        }
+        if (special.length === 1 && groups.length > 0) {
+            groups[0].push(special.pop());
+        } else if (special.length === 1) {
+            normal.push(special.pop());
+        }
+
+        groups.sort(() => Math.random() - 0.5);
+        groups.forEach((g, i) => {
+            teams[i % teamCount].push(...g);
+        });
+
+        // 残りのメンバーを補充
+        normal.forEach(m => {
+            teams.sort((a, b) => a.length - b.length);
+            teams[0].push(m);
+        });
+        
+        return teams;
+    }
+
+    function calculatePenalty(teams) {
+        let penalty = 0;
+        teams.forEach(list => {
+            for (let i = 0; i < list.length; i++) {
+                for (let j = i + 1; j < list.length; j++) {
+                    const pair = [list[i], list[j]].sort().join('|');
+                    if (globalHistory[pair]) penalty += globalHistory[pair];
+                }
+            }
+        });
+        return penalty;
+    }
+
+    function updateHistory(teams) {
+        teams.forEach(list => {
+            for (let i = 0; i < list.length; i++) {
+                for (let j = i + 1; j < list.length; j++) {
+                    const pair = [list[i], list[j]].sort().join('|');
+                    globalHistory[pair] = (globalHistory[pair] || 0) + 1;
+                }
+            }
+        });
+    }
+
+    function render(teams, num, teamNames) {
+        const block = document.createElement('div');
+        block.className = 'iteration-block';
+        block.innerHTML = `<div class="pattern-label"><strong>第 ${num} パターン</strong></div>`;
+        
+        const container = document.createElement('div');
+        container.className = 'result-container';
+        
+        teams.forEach((mList, i) => {
+            const listHtml = mList.map(m => {
+                const isS = m.includes('*');
+                return `<div class="member-item ${isS ? 'special' : ''}">${m.replace('*', '')}${isS ? ' (★)' : ''}</div>`;
+            }).join('');
+            
+            const tName = teamNames[i] || `チーム ${i+1}`;
+            container.innerHTML += `
+                <div class="team-box">
+                    <div class="team-title">${tName}</div>
+                    ${listHtml}
+                </div>`;
+        });
+        
+        block.appendChild(container);
+        document.getElementById('allResultsArea').appendChild(block);
+    }
+</script>
+</body>
+</html>
